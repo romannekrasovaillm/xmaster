@@ -1627,62 +1627,132 @@ class XMasterFunctionExecutor:
                 role=role
             )
 
-    def web_search(self, query: str = None, **kwargs) -> FunctionResult:
-        """Enhanced web search with X-Master capabilities."""
+    def web_search(
+        self,
+        query: str = None,
+        max_results: int = 7,
+        region: str = 'wt-wt',
+        timelimit: str = 'y',
+        retries: int = 3,
+        **kwargs
+    ) -> FunctionResult:
+        """Enhanced web search with X-Master capabilities.
+
+        Args:
+            query: Search query string.
+            max_results: Maximum number of results to fetch.
+            region: Regional setting for the search.
+            timelimit: Time limit filter for search results.
+            retries: Number of retry attempts for the search request.
+        """
         if not query:
             return FunctionResult(
                 success=False,
                 data=None,
-                error="No search query provided."
+                error="No search query provided.",
             )
-        
+
         start_time = time.time()
         self.tool_usage_stats['web_search'] += 1
-        
+
         logger.info(f"Performing X-Master web search for: '{query}'")
-        try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, region='wt-wt', safesearch='off', timelimit='y', max_results=7))
 
-            if not results:
-                return FunctionResult(success=True, data="No search results found.")
+        results = []
+        last_exception = None
+        attempt = 0
+        for attempt in range(1, retries + 1):
+            try:
+                with DDGS() as ddgs:
+                    results = list(
+                        ddgs.text(
+                            query,
+                            region=region,
+                            safesearch='off',
+                            timelimit=timelimit,
+                            max_results=max_results,
+                        )
+                    )
+                break
+            except Exception as e:
+                last_exception = e
+                logger.warning(
+                    f"DDGS search attempt {attempt} failed: {e}"
+                )
+                if attempt < retries:
+                    time.sleep(1 * attempt)
 
-            # Enhanced result formatting for X-Master
-            formatted_results = []
-            for i, result in enumerate(results, 1):
-                formatted_result = {
-                    "rank": i,
-                    "title": result.get("title", ""),
-                    "link": result.get("href", ""),
-                    "snippet": result.get("body", ""),
-                    "relevance_score": 1.0 - (i * 0.1)  # Simple relevance scoring
-                }
-                formatted_results.append(formatted_result)
-
+        if last_exception and not results:
             execution_time = time.time() - start_time
-
-            return FunctionResult(
-                success=True, 
-                data=json.dumps(formatted_results, indent=2, ensure_ascii=False),
-                metadata={
-                    'query': query,
-                    'results_count': len(formatted_results),
-                    'execution_time': execution_time,
-                    'tool': 'web_search'
-                },
-                execution_time=execution_time
+            error_msg = (
+                f"X-Master web search failed after {attempt} attempts: {last_exception}"
             )
-
-        except Exception as e:
-            execution_time = time.time() - start_time
-            error_msg = f"X-Master web search failed: {e}"
             logger.error(error_msg)
             return FunctionResult(
-                success=False, 
-                data=None, 
+                success=False,
+                data=None,
                 error=error_msg,
-                execution_time=execution_time
+                metadata={
+                    'query': query,
+                    'attempts': attempt,
+                    'retries': retries,
+                    'max_results': max_results,
+                    'region': region,
+                    'timelimit': timelimit,
+                    'tool': 'web_search',
+                    'execution_time': execution_time,
+                },
+                execution_time=execution_time,
             )
+
+        if not results:
+            execution_time = time.time() - start_time
+            return FunctionResult(
+                success=True,
+                data="No search results found.",
+                metadata={
+                    'query': query,
+                    'results_count': 0,
+                    'attempts': attempt,
+                    'retries': retries,
+                    'max_results': max_results,
+                    'region': region,
+                    'timelimit': timelimit,
+                    'tool': 'web_search',
+                    'execution_time': execution_time,
+                },
+                execution_time=execution_time,
+            )
+
+        # Enhanced result formatting for X-Master
+        formatted_results = []
+        for i, result in enumerate(results, 1):
+            formatted_result = {
+                "rank": i,
+                "title": result.get("title", ""),
+                "link": result.get("href", ""),
+                "snippet": result.get("body", ""),
+                "relevance_score": 1.0 - (i * 0.1)  # Simple relevance scoring
+            }
+            formatted_results.append(formatted_result)
+
+        execution_time = time.time() - start_time
+
+        return FunctionResult(
+            success=True,
+            data=json.dumps(formatted_results, indent=2, ensure_ascii=False),
+            metadata={
+                'query': query,
+                'results_count': len(formatted_results),
+                'execution_time': execution_time,
+                'attempts': attempt,
+                'retries': retries,
+                'max_results': max_results,
+                'region': region,
+                'timelimit': timelimit,
+                'tool': 'web_search',
+            },
+            execution_time=execution_time
+        )
 
     def web_parse(self, url: str, query: str = None, **kwargs) -> FunctionResult:
         """Enhanced web parsing with X-Master capabilities."""
